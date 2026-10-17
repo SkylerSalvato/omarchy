@@ -1,49 +1,56 @@
-if lspci | grep -qi 'nvidia'; then
-  # Check which kernel is installed and set appropriate headers package
-  KERNEL_HEADERS="$(pacman -Qqs '^linux(-zen|-lts|-hardened)?$' | head -1)-headers"
+#!/bin/bash
+set -e
 
-  if omarchy-hw-nvidia-gsp; then
-    PACKAGES=(nvidia-open-dkms nvidia-utils lib32-nvidia-utils libva-nvidia-driver)
-    GPU_ARCH="turing_plus"
-  elif omarchy-hw-nvidia-without-gsp; then
-    PACKAGES=(nvidia-580xx-dkms nvidia-580xx-utils lib32-nvidia-580xx-utils)
-    GPU_ARCH="maxwell_pascal_volta"
-  fi
-  # Bail if no supported GPU
-  if [[ -z ${PACKAGES+x} ]]; then
-    echo "No compatible driver for your NVIDIA GPU. See: https://wiki.archlinux.org/title/NVIDIA"
+# --- NVIDIA Configuration for Omarchy on CachyOS ---
+# Philosophy: detect and use whatever NVIDIA driver CachyOS has installed.
+# Only install a driver if none is present. Never downgrade or force-replace.
+
+# Exit early if no NVIDIA GPU is present
+if ! lspci -nn -d 10de: | grep -qE "VGA|3D"; then
+    echo "[*] No NVIDIA GPU found. Skipping."
     exit 0
-  fi
-
-  omarchy-pkg-add "$KERNEL_HEADERS" "${PACKAGES[@]}"
-
-  # Configure modprobe for early KMS
-  sudo tee /etc/modprobe.d/nvidia.conf <<EOF >/dev/null
-options nvidia_drm modeset=1
-EOF
-
-  # Configure mkinitcpio for early loading
-  sudo tee /etc/mkinitcpio.conf.d/nvidia.conf <<EOF >/dev/null
-MODULES+=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)
-EOF
-
-  # Add NVIDIA environment variables based on GPU architecture
-  if [[ $GPU_ARCH = "turing_plus" ]]; then
-    # Turing+ (RTX 20xx, GTX 16xx, and newer) with GSP firmware support
-    cat >>"$HOME/.config/hypr/envs.conf" <<'EOF'
-
-# NVIDIA (Turing+ with GSP firmware)
-env = NVD_BACKEND,direct
-env = LIBVA_DRIVER_NAME,nvidia
-env = __GLX_VENDOR_LIBRARY_NAME,nvidia
-EOF
-  elif [[ $GPU_ARCH = "maxwell_pascal_volta" ]]; then
-    # Maxwell/Pascal/Volta (GTX 9xx/10xx, GT 10xx, Quadro P/M/GV, MX series, Titan X/Xp/V) lack GSP firmware
-    cat >>"$HOME/.config/hypr/envs.conf" <<'EOF'
-
-# NVIDIA (Maxwell/Pascal/Volta without GSP firmware)
-env = NVD_BACKEND,egl
-env = __GLX_VENDOR_LIBRARY_NAME,nvidia
-EOF
-  fi
 fi
+
+GPU_NAME=$(lspci -d 10de: | grep -E "VGA|3D" | head -n1 | sed 's/.*: //')
+echo "[*] NVIDIA GPU detected: $GPU_NAME"
+
+# Determine if a working NVIDIA driver (kernel module) is already installed.
+# Recognises the full CachyOS driver family:
+#   - stock:         nvidia, nvidia-open
+#   - DKMS:          nvidia-dkms, nvidia-open-dkms
+#   - kernel module: linux-cachyos-nvidia, linux-cachyos-nvidia-open
+# nvidia-utils alone is userland and does NOT count as a kernel module.
+NVIDIA_DRIVER=$(pacman -Qq | grep -E '^(nvidia|nvidia-open|nvidia-dkms|nvidia-open-dkms|linux-cachyos-nvidia.*)$' | head -n1 || true)
+
+if [[ -n "$NVIDIA_DRIVER" ]]; then
+    DRIVER_VERSION=$(pacman -Q "$NVIDIA_DRIVER" 2>/dev/null | awk '{print $2}')
+    echo "[*] Active NVIDIA driver found: $NVIDIA_DRIVER $DRIVER_VERSION"
+    echo "[*] Respecting existing CachyOS driver installation."
+else
+    echo "[!] No NVIDIA driver detected — installing via chwd..."
+    sudo chwd -a
+    echo "[*] Driver installed via CachyOS hardware detection."
+fi
+
+# Ensure VA-API utils are present for hardware video acceleration
+sudo pacman -S --needed --noconfirm libva-utils
+
+# Apply NVIDIA environment variables for UWSM/Hyprland
+mkdir -p "$HOME/.config/uwsm"
+if ! grep -q "GBM_BACKEND=nvidia-drm" "$HOME/.config/uwsm/env" 2>/dev/null; then
+    cat >>"$HOME/.config/uwsm/env" <<'EOF'
+
+# NVIDIA
+export LIBVA_DRIVER_NAME=nvidia
+export GBM_BACKEND=nvidia-drm
+export __GLX_VENDOR_LIBRARY_NAME=nvidia
+export NVD_BACKEND=direct
+export MOZ_DISABLE_RDD_SANDBOX=1
+export CUDA_DISABLE_PERF_BOOST=1
+EOF
+    echo "[*] NVIDIA environment variables written to ~/.config/uwsm/env"
+else
+    echo "[*] NVIDIA environment variables already present."
+fi
+
+echo "[*] NVIDIA configuration complete."

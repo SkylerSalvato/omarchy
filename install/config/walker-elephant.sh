@@ -1,4 +1,22 @@
 #!/bin/bash
+# Pin walker to omarchy repo to prevent CachyOS version conflict
+if ! grep -q "^IgnorePkg.*walker" /etc/pacman.conf 2>/dev/null; then
+  if grep -q "^IgnorePkg" /etc/pacman.conf; then
+    sudo sed -i 's/^IgnorePkg = \(.*\)/IgnorePkg = \1 walker/' /etc/pacman.conf
+  else
+    sudo sed -i '/^\[options\]/a IgnorePkg = walker' /etc/pacman.conf
+  fi
+fi
+
+# Pin walker to omarchy repo to prevent CachyOS version conflict
+if ! grep -q "^IgnorePkg.*walker" /etc/pacman.conf 2>/dev/null; then
+  if grep -q "^IgnorePkg" /etc/pacman.conf; then
+    sudo sed -i 's/^IgnorePkg = \(.*\)/IgnorePkg = \1 walker/' /etc/pacman.conf
+  else
+    sudo sed -i '/^\[options\]/a IgnorePkg = walker' /etc/pacman.conf
+  fi
+fi
+
 
 # Ensure Walker service is started automatically on boot
 mkdir -p ~/.config/autostart/
