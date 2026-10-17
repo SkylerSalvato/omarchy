@@ -296,6 +296,16 @@ cat >"$work/stubs/locale" <<'STUB'
 #!/bin/bash
 if [[ $1 == "-a" ]]; then echo "en_US.utf8"; else echo "LANG=en_US.UTF-8"; fi
 STUB
+# A fake Hyprland session: the compositor and the shell restart record what
+# they were asked, so the test never touches a desktop it runs inside.
+cat >"$work/stubs/hyprctl" <<'STUB'
+#!/bin/bash
+echo "$@" >>"$HYPRCTL_LOG"
+STUB
+cat >"$work/stubs/omarchy-restart-shell" <<'STUB'
+#!/bin/bash
+echo "restart" >>"$HYPRCTL_LOG"
+STUB
 # sudo and pkexec record which one elevated and what it ran, then run it
 # as-is. sudo answers the long listing (`sudo -n -l -l`) with the
 # passwordless grant only when TEST_SUDO_GRANT is set, the way a machine with
@@ -318,8 +328,9 @@ exec "$@"
 STUB
 chmod +x "$work/stubs/"*
 export PATH="$work/stubs:$PATH"
-export LOCALE_GEN_LOG=$work/locale-gen.log NOTIFY_LOG=$work/notify.log ELEVATE_LOG=$work/elevate.log SESSION_ENV_LOG=$work/session-env.log
-: >"$LOCALE_GEN_LOG"; : >"$NOTIFY_LOG"; : >"$ELEVATE_LOG"; : >"$SESSION_ENV_LOG"
+export LOCALE_GEN_LOG=$work/locale-gen.log NOTIFY_LOG=$work/notify.log ELEVATE_LOG=$work/elevate.log SESSION_ENV_LOG=$work/session-env.log HYPRCTL_LOG=$work/hyprctl.log
+export HYPRLAND_INSTANCE_SIGNATURE=test
+: >"$LOCALE_GEN_LOG"; : >"$NOTIFY_LOG"; : >"$ELEVATE_LOG"; : >"$SESSION_ENV_LOG"; : >"$HYPRCTL_LOG"
 
 assert_bash_equal() {
   if [[ $1 != "$2" ]]; then
@@ -346,6 +357,7 @@ assert_bash_equal "$(cat "$OMARCHY_LANGUAGE_FILE")" "da" "omarchy-language persi
 assert_bash_equal "$(omarchy-language)" "da" "omarchy-language reads the persisted choice"
 assert_bash_equal "$(grep '^export LANG=' "$session_env")" "export LANG=da_DK.UTF-8" "omarchy-language sets the session LANG through uwsm for the next login"
 assert_bash_equal "$(cat "$SESSION_ENV_LOG")" "--systemd LANG=da_DK.UTF-8" "omarchy-language hands the new LANG to apps launched from now on"
+assert_bash_equal "$(cat "$HYPRCTL_LOG")" $'eval hl.env("LANG", "da_DK.UTF-8")\nrestart' "omarchy-language pushes the new LANG into Hyprland, then respawns the shell from it"
 assert_bash_equal "$(grep '^da_DK.UTF-8' "$OMARCHY_LOCALE_GEN")" "da_DK.UTF-8 UTF-8" "omarchy-language enables the locale in locale.gen"
 assert_bash_equal "$(cat "$LOCALE_GEN_LOG")" "da_DK.UTF-8" "omarchy-language generates the locale"
 
